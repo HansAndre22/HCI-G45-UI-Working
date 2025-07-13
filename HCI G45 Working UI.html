@@ -1,0 +1,381 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EcoSort - Sustainable Waste Management</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    #map {
+      height: 400px;
+      width: 100%;
+    }
+    #map-error {
+      display: none;
+      color: red;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 font-sans">
+  <!-- Header -->
+  <header class="bg-green-600 text-white p-4 flex justify-between items-center">
+    <h1 class="text-2xl font-bold">EcoSort</h1>
+    <nav>
+      <ul class="flex space-x-4">
+        <li><a href="#login" class="hover:underline">Login/Sign Up</a></li>
+        <li><a href="#scanner" class="hover:underline">Waste Scanner</a></li>
+        <li><a href="#leaderboard" class="hover:underline">Leaderboard</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <!-- Main Content -->
+  <div class="flex h-screen">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-gray-800 text-white p-4">
+      <h2 class="text-xl font-semibold mb-4">Menu</h2>
+      <ul class="space-y-2">
+        <li><a href="#dashboard" class="block p-2 hover:bg-gray-700 rounded">Dashboard</a></li>
+        <li><a href="#history" class="block p-2 hover:bg-gray-700 rounded">History</a></li>
+        <li><a href="#quiz" class="block p-2 hover:bg-gray-700 rounded">Quiz</a></li>
+        <li><a href="#recycling-centers" class="block p-2 hover:bg-gray-700 rounded">Recycling Centers</a></li>
+      </ul>
+    </aside>
+
+    <!-- Main Section -->
+    <main class="flex-1 p-6">
+      <!-- User Registration & Login -->
+      <section id="login" class="mb-6">
+        <h2 class="text-2xl font-semibold mb-2">User Registration & Login</h2>
+        <div class="bg-white p-4 rounded shadow">
+          <p class="mb-2">Sign up or log in to start sorting waste!</p>
+          <input type="email" placeholder="Email" class="border p-2 rounded w-full mb-2">
+          <input type="password" placeholder="Password" class="border p-2 rounded w-full mb-2">
+          <button class="bg-green-500 text-white p-2 rounded hover:bg-green-600">Login</button>
+          <button class="bg-blue-500 text-white p-2 rounded hover:bg-blue-600 ml-2">Sign Up with Email</button>
+          <button class="bg-gray-500 text-white p-2 rounded hover:bg-gray-600 ml-2">Sign Up with Google</button>
+        </div>
+      </section>
+
+      <!-- Waste Scanner & Categorization Engine -->
+      <section id="scanner" class="mb-6">
+        <h2 class="text-2xl font-semibold mb-2">Waste Scanner</h2>
+        <div class="bg-white p-4 rounded shadow">
+          <p class="mb-2">Scan a barcode or upload an image to identify waste type.</p>
+          <input type="file" accept="image/*" id="wasteImage" class="mb-2">
+          <button onclick="scanWaste()" class="bg-green-500 text-white p-2 rounded hover:bg-green-600">Scan Waste</button>
+          <p id="scanResult" class="mt-2">Result: <span id="wasteType">None</span> (e.g., Organic, Recyclable, Hazardous)</p>
+        </div>
+      </section>
+
+      <!-- Daily EcoTips -->
+      <section id="ecotips" class="mb-6">
+        <h2 class="text-2xl font-semibold mb-2">Daily EcoTips</h2>
+        <div class="bg-white p-4 rounded shadow">
+          <p id="dailyTip">Tip: Reduce plastic use by switching to reusable bags!</p>
+          <button onclick="getNewTip()" class="bg-green-500 text-white p-2 rounded hover:bg-green-600">New Tip</button>
+        </div>
+      </section>
+
+      <!-- Gamification System -->
+      <section id="gamification" class="mb-6">
+        <h2 class="text-2xl font-semibold mb-2">Gamification</h2>
+        <div class="bg-white p-4 rounded shadow">
+          <p>Your Points: <span id="userPoints">100</span></p>
+          <p>Badges: <span id="userBadges">Eco Starter</span></p>
+          <button onclick="addPoints()" class="bg-green-500 text-white p-2 rounded hover:bg-green-600">Sort Waste to Earn Points</button>
+        </div>
+      </section>
+
+      <!-- Leaderboard -->
+      <section id="leaderboard" class="mb-6">
+        <h2 class="text-2xl font-semibold mb-2">Leaderboard</h2>
+        <div class="bg-white p-4 rounded shadow">
+          <ul id="leaderboardList">
+            <li>1. GreenGuru - 500 points</li>
+            <li>2. EcoWarrior - 450 points</li>
+            <li>3. You - 100 points</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Quiz Module -->
+      <section id="quiz" class="mb-6">
+        <h2 class="text-2xl font-semibold mb-2">Quiz Module</h2>
+        <div class="bg-white p-4 rounded shadow">
+          <p id="quizQuestion">Question: Which bin does a plastic bottle go into?</p>
+          <button onclick="answerQuiz('Recyclable')" class="bg-green-500 text-white p-2 rounded hover:bg-green-600 mr-2">Recyclable</button>
+          <button onclick="answerQuiz('Landfill')" class="bg-red-500 text-white p-2 rounded hover:bg-red-600">Landfill</button>
+          <p id="quizResult" class="mt-2"></p>
+        </div>
+      </section>
+
+      <!-- Recycling Center Locator -->
+      <section id="recycling-centers" class="mb-6">
+        <h2 class="text-2xl font-semibold mb-2">Recycling Center Locator</h2>
+        <div class="bg-white p-4 rounded shadow">
+          <p class="mb-2">Find nearby recycling centers using OpenStreetMap.</p>
+          <input type="text" id="searchLocation" placeholder="Enter your location (e.g., Kuala Lumpur, Malaysia)" class="border p-2 rounded w-full mb-2">
+          <button onclick="searchRecyclingCenters()" class="bg-green-500 text-white p-2 rounded hover:bg-green-600">Search</button>
+          <p id="map-error">Failed to load map or search results. Please check your internet connection or try again later.</p>
+          <div id="map" class="mt-2"></div>
+        </div>
+      </section>
+
+      <!-- User History Tracker -->
+      <section id="history" class="mb-6">
+        <h2 class="text-2xl font-semibold mb-2">User History</h2>
+        <div class="bg-white p-4 rounded shadow">
+          <p>Track your sorted waste history.</p>
+          <ul id="historyList">
+            <li>2025-07-01: Plastic Bottle - Recyclable</li>
+            <li>2025-07-02: Food Scrap - Organic</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Notification System -->
+      <section id="notifications" class="mb-6">
+        <h2 class="text-2xl font-semibold mb-2">Notifications</h2>
+        <div class="bg-white p-4 rounded shadow">
+          <p id="notification">Reminder: Sort your waste daily to earn more points!</p>
+          <button onclick="getNewNotification()" class="bg-green-500 text-white p-2 rounded hover:bg-green-600">New Notification</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    // Initialize audio for button clicks
+    const clickSound = new Audio('https://freesound.org/data/previews/171/171671_2437358-lq.mp3');
+    clickSound.volume = 0.3; // Reduced volume for softer sound
+    clickSound.preload = 'auto'; // Preload audio
+
+    // Check if audio is loaded before playing
+    let isAudioLoaded = false;
+    clickSound.addEventListener('canplaythrough', () => {
+      isAudioLoaded = true;
+    });
+    clickSound.addEventListener('error', (e) => {
+      console.error('Error loading audio:', e.message, e.code);
+    });
+
+    // Add click sound to all buttons with enhanced error handling
+    document.querySelectorAll('button').forEach(button => {
+      button.addEventListener('click', () => {
+        try {
+          if (isAudioLoaded) {
+            const playPromise = clickSound.play();
+            if (playPromise !== undefined) {
+              playPromise.catch(error => {
+                console.error('Error playing click sound:', error.message, error.name);
+              });
+            }
+          } else {
+            console.warn('Audio not yet loaded, skipping play attempt.');
+          }
+        } catch (error) {
+          console.error('Error initiating click sound:', error.message, error.name);
+        }
+      });
+    });
+
+    // Mock Waste Scanner
+    function scanWaste() {
+      const fileInput = document.getElementById('wasteImage');
+      const wasteType = document.getElementById('wasteType');
+      if (fileInput.files.length > 0) {
+        const mockCategories = ['Organic', 'Recyclable', 'Hazardous', 'Landfill'];
+        wasteType.textContent = mockCategories[Math.floor(Math.random() * mockCategories.length)];
+      } else {
+        wasteType.textContent = 'Please upload an image';
+      }
+    }
+
+    // Mock Daily EcoTips
+    const tips = [
+      'Reduce plastic use by switching to reusable bags!',
+      'Compost food scraps to enrich your garden soil.',
+      'Recycle paper to save trees and reduce landfill waste.'
+    ];
+    function getNewTip() {
+      const dailyTip = document.getElementById('dailyTip');
+      dailyTip.textContent = 'Tip: ' + tips[Math.floor(Math.random() * tips.length)];
+    }
+
+    // Mock Gamification
+    let points = 100;
+    function addPoints() {
+      points += 10;
+      document.getElementById('userPoints').textContent = points;
+      if (points >= 200) {
+        document.getElementById('userBadges').textContent = 'Eco Pro';
+      }
+    }
+
+    // Mock Quiz
+    function answerQuiz(answer) {
+      const result = document.getElementById('quizResult');
+      if (answer === 'Recyclable') {
+        result.textContent = 'Correct! Plastic bottles go in the recycling bin.';
+      } else {
+        result.textContent = 'Incorrect. Try again!';
+      }
+    }
+
+    // Mock Notification
+    const notifications = [
+      'Reminder: Sort your waste daily to earn more points!',
+      'New quiz available! Test your recycling knowledge.',
+      'Check out nearby recycling centers today!'
+    ];
+    function getNewNotification() {
+      const notification = document.getElementById('notification');
+      notification.textContent = notifications[Math.floor(Math.random() * notifications.length)];
+    }
+
+    // Leaflet Map Integration
+    let map;
+    function initMap() {
+      try {
+        // Initialize Leaflet map with OpenStreetMap tiles, centered on Kuala Lumpur
+        map = L.map('map').setView([3.1390, 101.6869], 12); // Kuala Lumpur, Malaysia
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          maxZoom: 19
+        }).addTo(map);
+
+        // Hide error message
+        document.getElementById('map-error').style.display = 'none';
+
+        // Add mock recycling centers
+        addRecyclingMarkers();
+      } catch (error) {
+        console.error('Failed to initialize map:', error);
+        document.getElementById('map-error').style.display = 'block';
+      }
+    }
+
+    // Search for recycling centers using Nominatim
+    function searchRecyclingCenters() {
+      const input = document.getElementById('searchLocation').value;
+      if (!input) {
+        addRecyclingMarkers(); // Default markers if no input
+        return;
+      }
+
+      // Use Nominatim for geocoding
+      axios.get(`https://nominatim.openstreetmap.org/search`, {
+        params: {
+          q: input,
+          format: 'json',
+          limit: 1
+        }
+      }).then(response => {
+        const results = response.data;
+        if (results.length > 0) {
+          const { lat, lon } = results[0];
+          map.setView([parseFloat(lat), parseFloat(lon)], 12);
+
+          // Search for recycling centers
+          axios.get(`https://nominatim.openstreetmap.org/search`, {
+            params: {
+              q: `recycling center near ${input}`,
+              format: 'json',
+              limit: 5
+            }
+          }).then(response => {
+            map.eachLayer(layer => {
+              if (layer instanceof L.Marker) map.removeLayer(layer);
+            });
+            const centers = response.data;
+            if (centers.length > 0) {
+              centers.forEach(center => {
+                const marker = L.marker([parseFloat(center.lat), parseFloat(center.lon)]).addTo(map);
+                marker.bindPopup(`<b>${center.display_name}</b><br>Recycling Center`);
+              });
+            } else {
+              alert('No recycling centers found. Showing default markers.');
+              addRecyclingMarkers();
+            }
+          }).catch(error => {
+            console.error('Error searching recycling centers:', error);
+            alert('Error searching recycling centers. Showing default markers.');
+            addRecyclingMarkers();
+          });
+        } else {
+          alert('Location not found. Showing default markers.');
+          addRecyclingMarkers();
+        }
+      }).catch(error => {
+        console.error('Error geocoding location:', error);
+        document.getElementById('map-error').style.display = 'block';
+      });
+    }
+
+    // Add mock recycling center markers for Kuala Lumpur
+    function addRecyclingMarkers() {
+      map.eachLayer(layer => {
+        if (layer instanceof L.Marker) map.removeLayer(layer);
+      });
+
+      const mockCenters = [
+        { lat: 3.1390, lng: 101.6869, name: "KL Sentral Recycling" },
+        { lat: 3.1480, lng: 101.6940, name: "Bukit Bintang Recycling" },
+        { lat: 3.1290, lng: 101.6780, name: "Petaling Jaya Recycling" }
+      ];
+
+      mockCenters.forEach(center => {
+        const marker = L.marker([center.lat, center.lng]).addTo(map);
+        marker.bindPopup(`<b>${center.name}</b><br>Recycling Center`);
+      });
+    }
+
+    // Initialize map on page load
+    initMap();
+  </script>
+</body>
+</html>
